@@ -190,7 +190,7 @@ void inicializar_GPIOs(){
     ssd1306_init(&ssd, WIDTH, HEIGHT, false, endereco, I2C_PORT);
     ssd1306_config(&ssd);
     ssd1306_send_data(&ssd);
-    ssd1306_fill(&ssd, false);
+    ssd1306_fill(&ssd, false);  //Limpa o display
     ssd1306_send_data(&ssd);
 
     //Inicializa o ADC
@@ -228,58 +228,81 @@ void parar_buzzer(){
     pwm_set_enabled(slice_num, false);
 }
 
+bool buzzer_ligado = false; // Controle para alternar os bipes
+
 void ler_microfone(){
-    //Lê o valor do microfone (canal 2)
+    // Lê o valor do microfone (canal 2)
     adc_select_input(2);
     uint16_t valor_microfone = adc_read();
     uint32_t periodo = to_ms_since_boot(get_absolute_time());
 
-    //Se está no período de espera, impede qualquer ativação do alerta sonoro
+    // Se está no período de espera, impede qualquer ativação do alerta sonoro
     if(espera_ativa && (periodo - tempo_espera < 30000)){
-        return; //Sai da função sem ativar alerta
+        return; // Sai da função sem ativar alerta
     }else{
         espera_ativa = false; // Passou os 30s, pode ativar novamente
     }
 
-    //Controle de perturbação no andar, considerando 5 segundos de tolerância
-    if (valor_microfone > limiar){
-        if (!alerta_sonoro){
-            //Se não há alerta e o ruído começou agora, registra o tempo inicial
+    // Controle de perturbação no andar, considerando 3 segundos de tolerância
+    if(valor_microfone > limiar){
+        if(!alerta_sonoro){
+            // Se não há alerta e o ruído começou agora, registra o tempo inicial
             tempo_real = periodo;
             alerta_sonoro = true;
-            printf("Perturbação no andar: %d\nAcionando câmera no local.\n\n", numero);
-            printf("Registrando dados de gravação e horário\n\n");
-        }else if(periodo - tempo_real >= 5000){
-            //Só ativa o buzzer se passaram 5s de ruído contínuo
-            alerta_sonoro = true;
-            iniciar_buzzer();
         }
+        
+        // Se o ruído continua acima do limiar e já passaram 3 segundos desde o início do ruído
+        if((periodo - tempo_real) >= 3000){
+            printf("Perturbação no andar %d\nGRAVANDO...\n\n", numero);
+            sleep_ms(500);
+            gpio_put(LED_PIN_RED, 1);   // Ativa o LED vermelho indicando início da gravação
+
+            // Alterna o estado do buzzer para criar bipes intercalados
+            if (periodo % 1000 < 500) { // Alterna a cada 500ms
+                if (!buzzer_ligado) {
+                    iniciar_buzzer();
+                    buzzer_ligado = true;
+                }
+            }else{
+                if (buzzer_ligado) {
+                    parar_buzzer();
+                    buzzer_ligado = false;
+                }
+            }
+        }
+
         silencio_tempo = 0; // Reinicia o tempo de silêncio
-    }else{
-        //Se o ruído parou, inicia a contagem do silêncio
+    }else{            
+        // Se o ruído parou, inicia a contagem do silêncio
         if(alerta_sonoro){
             if(silencio_tempo == 0){
                 silencio_tempo = periodo;
-            }else if(periodo - silencio_tempo >= 5000){
-                parar_buzzer();
+            }else if(periodo - silencio_tempo >= 3000){
+                printf("Registrando dados de gravação e horário.\n\n");
+                gpio_put(LED_PIN_RED, 0);   // Desativa o LED vermelho (representando a gravação finalizada)
+                parar_buzzer(); // Garante que o buzzer seja desligado
                 alerta_sonoro = false;
+                buzzer_ligado = false; // Reseta o estado do buzzer
             }
         }
     }
 }
+
+
 //Função de interrupção com Debouncing
 void gpio_irq_handler(uint gpio, uint32_t events){
     uint32_t current_time = to_ms_since_boot(get_absolute_time());
 
-    if (current_time - last_time > 200) { // 200 ms de debouncing
+    if (current_time - last_time > 200){ //200 ms de debouncing
         last_time = current_time;
 
         // Caso o botão A seja pressionado
         if (gpio == BOTAO_A && !alerta_sonoro) {
-            numero++;
+            numero++;   //Incrementa o valor do andar (matriz de leds)
+            espera_ativa = false;   //Caso mudar o sensor, desliga a espera
             set_one_led(led_r, led_g, led_b, numero);
-            if (numero == 9) {
-                numero = 0;
+            if (numero == 9){
+                numero = 0; //Retorna ao andar 0
             }
         }
 
@@ -301,14 +324,19 @@ int main(){
     gpio_set_irq_enabled_with_callback(BOTAO_B, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
 
     set_one_led(led_r, led_g, led_b, 0); //Inicia a simulação monitorando o andar 0 ou terreo
-    ssd1306_draw_string(&ssd, "OLA", 10, 20);
-    ssd1306_send_data(&ssd);
 
     while(true){
+        char buffer[20];
+        ssd1306_fill(&ssd, false);  //Limpa o display antes de escrever   
+        ssd1306_draw_string(&ssd, "VIGILANCIA", 30, 10);       
+        sprintf(buffer, "ANDAR: %d", numero);
+        ssd1306_draw_string(&ssd, buffer, 10, 30);
+        ssd1306_send_data(&ssd);  //Atualiza o display    
+
         ler_microfone();
         
-        if(alerta_sonoro){
-            iniciar_buzzer();   //Manter o buzzer em loop acionado
-        }
+        // if(alerta_sonoro){
+        // iniciar_buzzer();   //Manter o buzzer em loop acionado
+        // }
     }
 }
