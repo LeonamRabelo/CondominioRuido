@@ -187,6 +187,11 @@ void inicializar_GPIOs(){
     gpio_set_function(I2C_SCL, GPIO_FUNC_I2C); // Set the GPIO pin function to I2C
     gpio_pull_up(I2C_SDA); // Pull up the data line
     gpio_pull_up(I2C_SCL); // Pull up the clock line
+    ssd1306_init(&ssd, WIDTH, HEIGHT, false, endereco, I2C_PORT);
+    ssd1306_config(&ssd);
+    ssd1306_send_data(&ssd);
+    ssd1306_fill(&ssd, false);
+    ssd1306_send_data(&ssd);
 
     //Inicializa o ADC
     adc_init();
@@ -296,6 +301,8 @@ int main(){
     gpio_set_irq_enabled_with_callback(BOTAO_B, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
 
     set_one_led(led_r, led_g, led_b, 0); //Inicia a simulação monitorando o andar 0 ou terreo
+    ssd1306_draw_string(&ssd, "OLA", 10, 20);
+    ssd1306_send_data(&ssd);
 
     while(true){
         ler_microfone();
