@@ -30,7 +30,7 @@ const uint amostras_por_segundo = 8000; //Frequência de amostragem (8 kHz)
 ssd1306_t ssd; //Inicializa a estrutura do display
 static volatile uint32_t last_time = 0; // Armazena o tempo do último evento (em microssegundos)
 volatile uint numero = 0;//variavel para inicializar o numero com 0, vai ser alterada nas interrupções (volatile)
-volatile uint64_t intervalo_us;
+//volatile uint64_t intervalo_us;
 static volatile uint32_t periodo_perturbacao = 0;   //Armazena o intervalo de tempo em microssegundos da perturbação
 volatile bool alerta_sonoro = false; // Controle do estado do buzzer
 
@@ -186,37 +186,7 @@ void inicializar_GPIOs(){
     adc_gpio_init(MIC_PIN);  //Configura GPIO28 como entrada ADC para o microfone
 
     //Define o intervalo entre amostras (em microsegundos)
-    intervalo_us = 1000000/amostras_por_segundo;
-
-    
-
-}
-
-void ler_microfone(){
-    // Lê o valor do microfone (canal 2)
-    adc_select_input(2);          // Seleciona o canal 2 (GPIO28)
-    uint16_t valor_microfone = adc_read(); // Lê o ADC
-
-    uint32_t timer_real = 0;
-
-        //Controle de pertubaçao no andar, considerando 5 segundos de tolerancia caso o ruido persistir
-        if(valor_microfone > limiar){
-            if(!alerta_sonoro){
-                timer_real = to_ms_since_boot(get_absolute_time());    //recebe tempo atual
-                alerta_sonoro = true;
-                printf("Perturbação no andar: %d\nAcionando câmera no local.\n\n", numero); //Envio serial
-                printf("Registrando dados de gravação e horario\n\n");
-            }else{
-                uint32_t elapsed_time = to_ms_since_boot(get_absolute_time()) - timer_real;
-                if (elapsed_time >= 5000){
-                    gpio_put(BUZZER_PIN, 1); // Aciona o buzzer
-                }
-            }
-        }else{
-            alerta_sonoro = false;
-            gpio_put(BUZZER_PIN, 0); // Desliga o buzzer
-        }
-        sleep_ms(100);
+    //intervalo_us = 1000000/amostras_por_segundo;
 }
 
 //Configuração do PWM para o Buzzer
@@ -238,29 +208,77 @@ void parar_buzzer(){
     uint slice_num = pwm_gpio_to_slice_num(BUZZER_PIN);
     pwm_set_enabled(slice_num, false);
 }
+uint32_t tempo_real = 0;
+uint32_t silencio_tempo = 0;
+uint32_t botao_tempo = 0;
+bool espera_ativa = false;
+bool botao_espera_ativa = false;
 
-//Função de interrupção com Debouncing
-void gpio_irq_handler(uint gpio, uint32_t events){
-    uint32_t current_time = to_us_since_boot(get_absolute_time());
-    
-    if(current_time - last_time > 200000){ //200 ms de debouncing
-    last_time = current_time; //Atualiza o tempo do último evento
-    
-        //Caso o botão A seja pressionado
-        if(gpio == BOTAO_A && !(alerta_sonoro)){
-            //INCREMENTAR o valor da matriz de leds (simulando o andar que esta sendo acionado)
+void ler_microfone(){
+    // Lê o valor do microfone (canal 2)
+    adc_select_input(2);
+    uint16_t valor_microfone = adc_read();
+    uint32_t periodo = to_ms_since_boot(get_absolute_time());
+
+    // Se está no período de espera, impede qualquer ativação do alerta sonoro
+    if (espera_ativa && (periodo - botao_tempo < 30000)){
+        return; //Sai da função sem ativar alerta
+    }else{
+        espera_ativa = false; // Passou os 30s, pode ativar novamente
+    }
+
+    //Controle de perturbação no andar, considerando 5 segundos de tolerância
+    if (valor_microfone > limiar){
+        if (!alerta_sonoro) {
+            //Se não há alerta e o ruído começou agora, registra o tempo inicial
+            tempo_real = periodo;
+            alerta_sonoro = true;
+            printf("Perturbação no andar: %d\nAcionando câmera no local.\n\n", numero);
+            printf("Registrando dados de gravação e horário\n\n");
+        }else if(periodo - tempo_real >= 5000) {
+            //Só ativa o buzzer se passaram 5s de ruído contínuo
+            alerta_sonoro = true;
+            iniciar_buzzer();
+        }
+        silencio_tempo = 0; // Reinicia o tempo de silêncio
+    }else{
+        //Se o ruído parou, inicia a contagem do silêncio
+        if(alerta_sonoro){
+            if(silencio_tempo == 0){
+                silencio_tempo = periodo;
+            }else if(periodo - silencio_tempo >= 5000) {
+                parar_buzzer();
+                alerta_sonoro = false;
+            }
+        }
+    }
+}
+// Função de interrupção com Debouncing
+void gpio_irq_handler(uint gpio, uint32_t events) {
+    uint32_t current_time = to_ms_since_boot(get_absolute_time());
+
+    if (current_time - last_time > 200) { // 200 ms de debouncing
+        last_time = current_time;
+
+        // Caso o botão A seja pressionado
+        if (gpio == BOTAO_A && !alerta_sonoro) {
             numero++;
             set_one_led(led_r, led_g, led_b, numero);
-            if(numero==9){
+            if (numero == 9) {
                 numero = 0;
             }
         }
-        if(gpio == BOTAO_B){
+
+        //Caso o botão B seja pressionado, desliga o alerta e inicia os 30s de espera
+        if (gpio == BOTAO_B){
             parar_buzzer();
             alerta_sonoro = false;
-        }
+            botao_espera_ativa = true;
+            botao_tempo = current_time; //Registra o momento do pressionamento
         }
     }
+}
+
 
 int main(){
     inicializar_GPIOs();
