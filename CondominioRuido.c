@@ -23,16 +23,23 @@
 #define LED_PIN_RED 13
 #define MIC_PIN 28
 #define BUZZER_PIN 21
+#define BUZZER_FREQ 2000 // Frequência do som em Hz
 
 const uint limiar = 3500;     //Limiar
-const uint amostras_por_segundo = 8000; //Frequência de amostragem (8 kHz)
+//const uint amostras_por_segundo = 8000; //Frequência de amostragem (8 kHz)
+uint32_t volatile tempo_real = 0;
+uint32_t volatile silencio_tempo = 0;
+uint32_t volatile botao_tempo = 0;
+bool volatile espera_ativa = false;
+//bool volatile botao_espera_ativa = false;
+bool volatile alerta_sonoro = false; // Controle do estado do buzzer
+uint volatile numero = 0;//variavel para inicializar o numero com 0, vai ser alterada nas interrupções (volatile)
+//volatile uint64_t intervalo_us;
+static uint32_t volatile last_time = 0; // Armazena o tempo do último evento (em microssegundos)
+uint32_t volatile tempo_espera = 0;  // Guarda o tempo que começou a espera de 30s
+
 
 ssd1306_t ssd; //Inicializa a estrutura do display
-static volatile uint32_t last_time = 0; // Armazena o tempo do último evento (em microssegundos)
-volatile uint numero = 0;//variavel para inicializar o numero com 0, vai ser alterada nas interrupções (volatile)
-//volatile uint64_t intervalo_us;
-static volatile uint32_t periodo_perturbacao = 0;   //Armazena o intervalo de tempo em microssegundos da perturbação
-volatile bool alerta_sonoro = false; // Controle do estado do buzzer
 
 //Variável global para armazenar a cor (Entre 0 e 255 para intensidade)
 uint8_t led_r = 20; //Intensidade do vermelho
@@ -189,18 +196,25 @@ void inicializar_GPIOs(){
     //intervalo_us = 1000000/amostras_por_segundo;
 }
 
-//Configuração do PWM para o Buzzer
 void iniciar_buzzer(){
     gpio_set_function(BUZZER_PIN, GPIO_FUNC_PWM);
     uint slice_num = pwm_gpio_to_slice_num(BUZZER_PIN);
-    pwm_set_clkdiv(slice_num, 125.0);                  
-    pwm_set_wrap(slice_num, 255);                      
-    pwm_set_gpio_level(BUZZER_PIN, 150);              
-    pwm_set_enabled(slice_num, true);   
-    
-    sleep_ms(1000);                                    //Manter o som por 2 segundos
-    pwm_set_enabled(slice_num, false);                 //Desativar o PWM  
-    sleep_ms(1000);                                    //Manter o som por 2 segundos
+    //Calcula o divisor do clock para atingir a frequência desejada
+    float clock_div = 125.0;  // lock divisor ajustável
+    uint16_t wrap_value = (125000000 / (clock_div * BUZZER_FREQ)) - 1; //125 MHz é o clock base
+    pwm_set_clkdiv(slice_num, clock_div);
+    pwm_set_wrap(slice_num, wrap_value);
+    pwm_set_gpio_level(BUZZER_PIN, wrap_value / 2); //50% do ciclo de trabalho (onda quadrada)
+
+    pwm_set_enabled(slice_num, true);
+    //Aguarda 1 segundo para manter o som ativo
+    sleep_ms(1000);
+
+    //Desativa o PWM corretamente
+    pwm_set_gpio_level(BUZZER_PIN, 0);
+    pwm_set_enabled(slice_num, false);
+    //Aguarda 2 segundos antes de poder tocar novamente
+    sleep_ms(2000);
 }
 
 //Desliga o buzzer
@@ -208,20 +222,15 @@ void parar_buzzer(){
     uint slice_num = pwm_gpio_to_slice_num(BUZZER_PIN);
     pwm_set_enabled(slice_num, false);
 }
-uint32_t tempo_real = 0;
-uint32_t silencio_tempo = 0;
-uint32_t botao_tempo = 0;
-bool espera_ativa = false;
-bool botao_espera_ativa = false;
 
 void ler_microfone(){
-    // Lê o valor do microfone (canal 2)
+    //Lê o valor do microfone (canal 2)
     adc_select_input(2);
     uint16_t valor_microfone = adc_read();
     uint32_t periodo = to_ms_since_boot(get_absolute_time());
 
-    // Se está no período de espera, impede qualquer ativação do alerta sonoro
-    if (espera_ativa && (periodo - botao_tempo < 30000)){
+    //Se está no período de espera, impede qualquer ativação do alerta sonoro
+    if(espera_ativa && (periodo - tempo_espera < 30000)){
         return; //Sai da função sem ativar alerta
     }else{
         espera_ativa = false; // Passou os 30s, pode ativar novamente
@@ -229,13 +238,13 @@ void ler_microfone(){
 
     //Controle de perturbação no andar, considerando 5 segundos de tolerância
     if (valor_microfone > limiar){
-        if (!alerta_sonoro) {
+        if (!alerta_sonoro){
             //Se não há alerta e o ruído começou agora, registra o tempo inicial
             tempo_real = periodo;
             alerta_sonoro = true;
             printf("Perturbação no andar: %d\nAcionando câmera no local.\n\n", numero);
             printf("Registrando dados de gravação e horário\n\n");
-        }else if(periodo - tempo_real >= 5000) {
+        }else if(periodo - tempo_real >= 5000){
             //Só ativa o buzzer se passaram 5s de ruído contínuo
             alerta_sonoro = true;
             iniciar_buzzer();
@@ -246,15 +255,15 @@ void ler_microfone(){
         if(alerta_sonoro){
             if(silencio_tempo == 0){
                 silencio_tempo = periodo;
-            }else if(periodo - silencio_tempo >= 5000) {
+            }else if(periodo - silencio_tempo >= 5000){
                 parar_buzzer();
                 alerta_sonoro = false;
             }
         }
     }
 }
-// Função de interrupção com Debouncing
-void gpio_irq_handler(uint gpio, uint32_t events) {
+//Função de interrupção com Debouncing
+void gpio_irq_handler(uint gpio, uint32_t events){
     uint32_t current_time = to_ms_since_boot(get_absolute_time());
 
     if (current_time - last_time > 200) { // 200 ms de debouncing
@@ -270,11 +279,11 @@ void gpio_irq_handler(uint gpio, uint32_t events) {
         }
 
         //Caso o botão B seja pressionado, desliga o alerta e inicia os 30s de espera
-        if (gpio == BOTAO_B){
+        if(gpio == BOTAO_B){
             parar_buzzer();
             alerta_sonoro = false;
-            botao_espera_ativa = true;
-            botao_tempo = current_time; //Registra o momento do pressionamento
+            espera_ativa = true;
+            tempo_espera = to_ms_since_boot(get_absolute_time()); //Armazena o tempo que começou a pausa
         }
     }
 }
