@@ -26,15 +26,12 @@
 #define BUZZER_FREQ 2000 // Frequência do som em Hz
 
 const uint limiar = 3500;     //Limiar
-//const uint amostras_por_segundo = 8000; //Frequência de amostragem (8 kHz)
 uint32_t volatile tempo_real = 0;
 uint32_t volatile silencio_tempo = 0;
 uint32_t volatile botao_tempo = 0;
 bool volatile espera_ativa = false;
-//bool volatile botao_espera_ativa = false;
 bool volatile alerta_sonoro = false; // Controle do estado do buzzer
 uint volatile numero = 0;//variavel para inicializar o numero com 0, vai ser alterada nas interrupções (volatile)
-//volatile uint64_t intervalo_us;
 static uint32_t volatile last_time = 0; // Armazena o tempo do último evento (em microssegundos)
 uint32_t volatile tempo_espera = 0;  // Guarda o tempo que começou a espera de 30s
 
@@ -181,12 +178,12 @@ void inicializar_GPIOs(){
     uint offset = pio_add_program(pio, &ws2812_program);
     ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000, IS_RGBW);
 
-    // I2C Initialisation. Using it at 400Khz.
+    //I2C IInicialização. Usando 400Khz.
     i2c_init(I2C_PORT, 400 * 1000);
-    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C); // Set the GPIO pin function to I2C
-    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C); // Set the GPIO pin function to I2C
-    gpio_pull_up(I2C_SDA); // Pull up the data line
-    gpio_pull_up(I2C_SCL); // Pull up the clock line
+    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C); //Envio do pino para I2C SDA (dados)
+    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C); //Envio do pino para I2C SCL (clock)
+    gpio_pull_up(I2C_SDA); // Pull up para data line
+    gpio_pull_up(I2C_SCL); // Pull up para clock line
     ssd1306_init(&ssd, WIDTH, HEIGHT, false, endereco, I2C_PORT);
     ssd1306_config(&ssd);
     ssd1306_send_data(&ssd);
@@ -196,19 +193,16 @@ void inicializar_GPIOs(){
     //Inicializa o ADC
     adc_init();
     adc_gpio_init(MIC_PIN);  //Configura GPIO28 como entrada ADC para o microfone
-
-    //Define o intervalo entre amostras (em microsegundos)
-    //intervalo_us = 1000000/amostras_por_segundo;
 }
 
 void iniciar_buzzer(){
-    gpio_set_function(BUZZER_PIN, GPIO_FUNC_PWM);
-    uint slice_num = pwm_gpio_to_slice_num(BUZZER_PIN);
+    gpio_set_function(BUZZER_PIN, GPIO_FUNC_PWM);   //Define o pino do buzzer como PWM
+    uint slice_num = pwm_gpio_to_slice_num(BUZZER_PIN); //Pega o slice do pino do buzzer
     //Calcula o divisor do clock para atingir a frequência desejada
     float clock_div = 125.0;  // lock divisor ajustável
     uint16_t wrap_value = (125000000 / (clock_div * BUZZER_FREQ)) - 1; //125 MHz é o clock base
-    pwm_set_clkdiv(slice_num, clock_div);
-    pwm_set_wrap(slice_num, wrap_value);
+    pwm_set_clkdiv(slice_num, clock_div);   //Define o clock divisor
+    pwm_set_wrap(slice_num, wrap_value);    //Define o valor de wrap
     pwm_set_gpio_level(BUZZER_PIN, wrap_value / 2); //50% do ciclo de trabalho (onda quadrada)
 
     pwm_set_enabled(slice_num, true);
@@ -243,7 +237,7 @@ void ler_microfone(){
         espera_ativa = false; // Passou os 30s, pode ativar novamente
     }
 
-    // Controle de perturbação no andar, considerando 3 segundos de tolerância
+    //Controle de perturbação no andar, considerando 3 segundos de tolerância
     if(valor_microfone > limiar){
         if(!alerta_sonoro){
             // Se não há alerta e o ruído começou agora, registra o tempo inicial
@@ -251,20 +245,20 @@ void ler_microfone(){
             alerta_sonoro = true;
         }
         
-        // Se o ruído continua acima do limiar e já passaram 3 segundos desde o início do ruído
+        //Se o ruído continua acima do limiar e já passaram 3 segundos desde o início do ruído
         if((periodo - tempo_real) >= 3000){
             printf("Perturbação no andar %d\nGRAVANDO...\n\n", numero);
             sleep_ms(500);
-            gpio_put(LED_PIN_RED, 1);   // Ativa o LED vermelho indicando início da gravação
+            gpio_put(LED_PIN_RED, 1);   //Ativa o LED vermelho indicando início da gravação
 
             // Alterna o estado do buzzer para criar bipes intercalados
-            if (periodo % 1000 < 500) { // Alterna a cada 500ms
+            if(periodo % 1000 < 500){ //Alterna a cada 500ms
                 if (!buzzer_ligado) {
                     iniciar_buzzer();
                     buzzer_ligado = true;
                 }
             }else{
-                if (buzzer_ligado) {
+                if(buzzer_ligado){
                     parar_buzzer();
                     buzzer_ligado = false;
                 }
@@ -334,9 +328,5 @@ int main(){
         ssd1306_send_data(&ssd);  //Atualiza o display    
 
         ler_microfone();
-        
-        // if(alerta_sonoro){
-        // iniciar_buzzer();   //Manter o buzzer em loop acionado
-        // }
     }
 }
