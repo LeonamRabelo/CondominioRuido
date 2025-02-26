@@ -257,7 +257,7 @@ uint16_t ler_microfone(){
             ssd1306_draw_string(&ssd, "ALERTA RUIDO", 10, 50);  //Escreve no display
             ssd1306_send_data(&ssd);                            //Atualiza o display    
 
-            printf("Perturbação no andar %d\nGRAVANDO...\n\n", numero);
+            printf("Perturbação na rua %d\nGRAVANDO...\n\n", numero);
             sleep_ms(500);
             gpio_put(LED_PIN_RED, 1);   //Ativa o LED vermelho indicando início da gravação
 
