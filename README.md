@@ -45,7 +45,7 @@ Com o uso do microfone conectado ao microcontrolador da BitDogLab, será realiza
    - O sistema simula gravação do registro, incluindo gravação por meio da comunicação serial USB, que pode armazenar os eventos de perturbação sonora para posterior análise.
 
 🎥 **Demonstração do Projeto**
-🔗 Vídeo de demonstração: []
+🔗 Vídeo de demonstração: [https://youtu.be/xOp6AUnd_g4]
 
 ---
 
